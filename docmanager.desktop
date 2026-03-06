@@ -1,0 +1,12 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=DocManager
+GenericName=Dokumentenverwaltung
+Comment=Dokumente scannen, importieren und per Volltext durchsuchen
+Exec=/home/marc/docmanager/docmanager.sh
+Icon=/home/marc/docmanager/assets/docmanager.svg
+Terminal=false
+StartupNotify=true
+Categories=Office;Utility;
+Keywords=Dokument;PDF;Scan;Import;Archiv;Suche;

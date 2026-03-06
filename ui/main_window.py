@@ -26,6 +26,7 @@ from ui.document_list import DocumentList
 from ui.preview_panel import PreviewPanel
 from ui.import_dialog import ImportDialog
 from ui.scanner_dialog import ScannerDialog
+from ui.directory_import_dialog import DirectoryImportDialog
 
 
 class MainWindow(QMainWindow):
@@ -88,11 +89,17 @@ class MainWindow(QMainWindow):
         tb.setMovable(False)
         self.addToolBar(tb)
 
-        # Import
+        # Import (Einzeldatei)
         act_import = QAction("Importieren", self)
         act_import.setShortcut(QKeySequence("Ctrl+O"))
         act_import.triggered.connect(self._import_file)
         tb.addAction(act_import)
+
+        # Verzeichnis-Import
+        act_dir_import = QAction("Ordner importieren", self)
+        act_dir_import.setShortcut(QKeySequence("Ctrl+Shift+O"))
+        act_dir_import.triggered.connect(self._import_directory)
+        tb.addAction(act_dir_import)
 
         # Scannen
         act_scan = QAction("Scannen", self)
@@ -214,6 +221,11 @@ class MainWindow(QMainWindow):
                 self._status_label.setText(f"Importiert: {title}")
             except Exception as e:
                 QMessageBox.critical(self, "Import-Fehler", str(e))
+
+    def _import_directory(self) -> None:
+        dlg = DirectoryImportDialog(self._db, self._doc_manager, self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self._reload_all()
 
     def _open_externally(self, doc_id: int) -> None:
         row = self._db.get_document(doc_id)
