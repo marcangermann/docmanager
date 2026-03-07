@@ -74,8 +74,8 @@ def extract_date_from_text(text: str) -> Optional[str]:
     """
     # Deutsche und internationale Datumsformate
     patterns = [
-        (r'\b(\d{4})-(\d{2})-(\d{2})\b', lambda m: f"{m[1]}-{m[2]}-{m[3]}"),
-        (r'\b(\d{2})\.(\d{2})\.(\d{4})\b', lambda m: f"{m[3]}-{m[2]}-{m[1]}"),
+        (r'\b(\d{4})-(\d{2})-(\d{2})\b', lambda m: f"{m[0]}-{m[1]}-{m[2]}"),
+        (r'\b(\d{2})\.(\d{2})\.(\d{4})\b', lambda m: f"{m[2]}-{m[1]}-{m[0]}"),
         (r'\b(\d{1,2})\.\s*(Januar|Februar|März|April|Mai|Juni|Juli|August|September|Oktober|November|Dezember)\s+(\d{4})\b',
          None),
     ]
@@ -94,7 +94,7 @@ def extract_date_from_text(text: str) -> Optional[str]:
                 from datetime import datetime
                 datetime.strptime(date_str, "%Y-%m-%d")
                 return date_str
-            except ValueError:
+            except (ValueError, IndexError):
                 continue
     # Deutsches Langformat
     m = re.search(r'\b(\d{1,2})\.\s*(januar|februar|märz|april|mai|juni|juli|august|september|oktober|november|dezember)\s+(\d{4})\b',
