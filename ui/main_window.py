@@ -15,8 +15,9 @@ from PyQt6.QtWidgets import (
     QSplitter, QToolBar, QStatusBar, QLineEdit,
     QFileDialog, QMessageBox, QDialog, QLabel
 )
-from PyQt6.QtCore import Qt, QTimer, pyqtSlot
+from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QAction, QKeySequence
+from PyQt6.QtWidgets import QProgressDialog
 
 import config
 from database.db import Database
@@ -27,6 +28,46 @@ from ui.preview_panel import PreviewPanel
 from ui.import_dialog import ImportDialog
 from ui.scanner_dialog import ScannerDialog
 from ui.directory_import_dialog import DirectoryImportDialog
+
+
+class _ReindexWorker(QThread):
+    """Extrahiert Text für alle Dokumente ohne Textinhalt und aktualisiert die DB."""
+    progress = pyqtSignal(int, int, str)   # current, total, title
+    finished = pyqtSignal(int, int)        # updated, skipped
+
+    def run(self) -> None:
+        import config as _cfg
+        from database.db import Database as _DB
+        from core.ocr_engine import extract_and_suggest
+
+        db = _DB(_cfg.DB_PATH)
+        db.connect()
+        rows = db.conn.execute(
+            "SELECT id, path, title FROM documents "
+            "WHERE text_content = '' OR text_content IS NULL"
+        ).fetchall()
+
+        total = len(rows)
+        updated = skipped = 0
+        for i, row in enumerate(rows):
+            self.progress.emit(i + 1, total, row["title"])
+            p = Path(row["path"])
+            if not p.exists():
+                skipped += 1
+                continue
+            try:
+                text, _, _ = extract_and_suggest(p)
+                snippet = text[:500] if text else ""
+                db.conn.execute(
+                    "UPDATE documents SET text_content=? WHERE id=?",
+                    (snippet, row["id"])
+                )
+                db.conn.commit()
+                updated += 1
+            except Exception:
+                skipped += 1
+        db.close()
+        self.finished.emit(updated, skipped)
 
 
 class MainWindow(QMainWindow):
@@ -105,6 +146,14 @@ class MainWindow(QMainWindow):
         act_scan = QAction("Scannen", self)
         act_scan.triggered.connect(self._scan_document)
         tb.addAction(act_scan)
+
+        # Texte neu indizieren
+        act_reindex = QAction("Texte indizieren", self)
+        act_reindex.setToolTip(
+            "Text aller Dokumente ohne Indexinhalt neu extrahieren (OCR)"
+        )
+        act_reindex.triggered.connect(self._reindex_documents)
+        tb.addAction(act_reindex)
 
         tb.addSeparator()
 
@@ -226,6 +275,59 @@ class MainWindow(QMainWindow):
         dlg = DirectoryImportDialog(self._db, self._doc_manager, self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self._reload_all()
+
+    def _reindex_documents(self) -> None:
+        """Startet OCR/Text-Extraktion für alle Dokumente ohne Textinhalt."""
+        pending = self._db.conn.execute(
+            "SELECT count(*) FROM documents "
+            "WHERE text_content = '' OR text_content IS NULL"
+        ).fetchone()[0]
+
+        if pending == 0:
+            QMessageBox.information(
+                self, "Texte indizieren",
+                "Alle Dokumente sind bereits indiziert."
+            )
+            return
+
+        reply = QMessageBox.question(
+            self, "Texte indizieren",
+            f"{pending} Dokument(e) ohne Textinhalt gefunden.\n"
+            "Text extrahieren und Volltextindex aufbauen?\n\n"
+            "(Kann je nach Anzahl und Dokumentgröße mehrere Minuten dauern.)",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        self._reindex_progress = QProgressDialog(
+            "Texte werden extrahiert …", "Abbrechen", 0, pending, self
+        )
+        self._reindex_progress.setWindowTitle("Texte indizieren")
+        self._reindex_progress.setMinimumDuration(0)
+        self._reindex_progress.setModal(True)
+
+        self._reindex_worker = _ReindexWorker()
+        self._reindex_worker.progress.connect(self._on_reindex_progress)
+        self._reindex_worker.finished.connect(self._on_reindex_finished)
+        self._reindex_progress.canceled.connect(self._reindex_worker.terminate)
+        self._reindex_worker.start()
+
+    def _on_reindex_progress(self, current: int, total: int, title: str) -> None:
+        self._reindex_progress.setMaximum(total)
+        self._reindex_progress.setValue(current)
+        self._reindex_progress.setLabelText(
+            f"[{current}/{total}] {title}"
+        )
+
+    def _on_reindex_finished(self, updated: int, skipped: int) -> None:
+        self._reindex_progress.close()
+        self._reload_all()
+        QMessageBox.information(
+            self, "Texte indizieren",
+            f"Fertig: {updated} Dokument(e) indiziert"
+            + (f", {skipped} übersprungen." if skipped else ".")
+        )
 
     def _open_externally(self, doc_id: int) -> None:
         row = self._db.get_document(doc_id)

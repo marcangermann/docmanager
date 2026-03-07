@@ -32,16 +32,17 @@ class Database:
 
     def _create_schema(self) -> None:
         assert self.conn
+        # Haupt-Tabellen anlegen (neue Schemabenennung: text_content)
         self.conn.executescript("""
             CREATE TABLE IF NOT EXISTS documents (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                path        TEXT NOT NULL UNIQUE,
-                title       TEXT NOT NULL,
-                date_added  TEXT NOT NULL,
-                date_doc    TEXT,
-                page_count  INTEGER DEFAULT 0,
-                file_size   INTEGER DEFAULT 0,
-                text_snippet TEXT DEFAULT ''
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                path         TEXT NOT NULL UNIQUE,
+                title        TEXT NOT NULL,
+                date_added   TEXT NOT NULL,
+                date_doc     TEXT,
+                page_count   INTEGER DEFAULT 0,
+                file_size    INTEGER DEFAULT 0,
+                text_content TEXT DEFAULT ''
             );
 
             CREATE TABLE IF NOT EXISTS tags (
@@ -57,25 +58,44 @@ class Database:
                 is_primary INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (doc_id, tag_id)
             );
+        """)
 
+        # Migration: text_snippet → text_content (Altdaten)
+        cols = [r[1] for r in self.conn.execute(
+            "PRAGMA table_info(documents)"
+        ).fetchall()]
+        if "text_snippet" in cols and "text_content" not in cols:
+            self.conn.execute(
+                "ALTER TABLE documents RENAME COLUMN text_snippet TO text_content"
+            )
+            # FTS-Tabelle und Trigger neu erzwingen (veraltetes Schema löschen)
+            self.conn.executescript("""
+                DROP TABLE IF EXISTS documents_fts;
+                DROP TRIGGER IF EXISTS docs_ai;
+                DROP TRIGGER IF EXISTS docs_au;
+                DROP TRIGGER IF EXISTS docs_ad;
+            """)
+
+        # FTS5 und Trigger (idempotent)
+        self.conn.executescript("""
             CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts
                 USING fts5(title, text_content, content='documents', content_rowid='id');
 
             CREATE TRIGGER IF NOT EXISTS docs_ai AFTER INSERT ON documents BEGIN
                 INSERT INTO documents_fts(rowid, title, text_content)
-                VALUES (new.id, new.title, new.text_snippet);
+                VALUES (new.id, new.title, new.text_content);
             END;
 
             CREATE TRIGGER IF NOT EXISTS docs_ad AFTER DELETE ON documents BEGIN
                 INSERT INTO documents_fts(documents_fts, rowid, title, text_content)
-                VALUES ('delete', old.id, old.title, old.text_snippet);
+                VALUES ('delete', old.id, old.title, old.text_content);
             END;
 
             CREATE TRIGGER IF NOT EXISTS docs_au AFTER UPDATE ON documents BEGIN
                 INSERT INTO documents_fts(documents_fts, rowid, title, text_content)
-                VALUES ('delete', old.id, old.title, old.text_snippet);
+                VALUES ('delete', old.id, old.title, old.text_content);
                 INSERT INTO documents_fts(rowid, title, text_content)
-                VALUES (new.id, new.title, new.text_snippet);
+                VALUES (new.id, new.title, new.text_content);
             END;
         """)
         self.conn.commit()
@@ -91,7 +111,7 @@ class Database:
         snippet = text_content[:500] if text_content else ""
         cur = self.conn.execute(
             """INSERT INTO documents (path, title, date_added, date_doc,
-               page_count, file_size, text_snippet)
+               page_count, file_size, text_content)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
             (path, title, now, date_doc, page_count, file_size, snippet)
         )
@@ -250,7 +270,7 @@ class Database:
             like = f"%{query}%"
             return self.conn.execute(
                 """SELECT * FROM documents
-                   WHERE title LIKE ? OR text_snippet LIKE ?
+                   WHERE title LIKE ? OR text_content LIKE ?
                    ORDER BY date_added DESC""",
                 (like, like)
             ).fetchall()
