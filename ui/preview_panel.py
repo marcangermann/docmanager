@@ -57,7 +57,7 @@ class PreviewPanel(QWidget):
 
         # Scroll-Bereich für das Bild
         self._scroll = QScrollArea()
-        self._scroll.setWidgetResizable(True)
+        self._scroll.setWidgetResizable(False)
         self._scroll.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self._img_label = QLabel()

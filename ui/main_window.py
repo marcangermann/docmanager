@@ -53,18 +53,25 @@ class _ReindexWorker(QThread):
             self.progress.emit(i + 1, total, row["title"])
             p = Path(row["path"])
             if not p.exists():
+                import sys
+                print(f"[reindex] Datei nicht gefunden: {p}", file=sys.stderr)
                 skipped += 1
                 continue
             try:
                 text, _, _ = extract_and_suggest(p)
-                snippet = text[:500] if text else ""
+                # Auch leere OCR-Ergebnisse speichern (verhindert erneute
+                # Verarbeitung und markiert Dokument als "OCR abgeschlossen")
+                snippet = text[:500] if text.strip() else " "
                 db.conn.execute(
                     "UPDATE documents SET text_content=? WHERE id=?",
                     (snippet, row["id"])
                 )
                 db.conn.commit()
                 updated += 1
-            except Exception:
+            except Exception as exc:
+                import sys
+                print(f"[reindex] Fehler bei '{row['title']}': {exc}",
+                      file=sys.stderr)
                 skipped += 1
         db.close()
         self.finished.emit(updated, skipped)

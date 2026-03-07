@@ -64,6 +64,7 @@ class Database:
         cols = [r[1] for r in self.conn.execute(
             "PRAGMA table_info(documents)"
         ).fetchall()]
+        needs_fts_rebuild = False
         if "text_snippet" in cols and "text_content" not in cols:
             self.conn.execute(
                 "ALTER TABLE documents RENAME COLUMN text_snippet TO text_content"
@@ -75,6 +76,7 @@ class Database:
                 DROP TRIGGER IF EXISTS docs_au;
                 DROP TRIGGER IF EXISTS docs_ad;
             """)
+            needs_fts_rebuild = True
 
         # FTS5 und Trigger (idempotent)
         self.conn.executescript("""
@@ -98,6 +100,15 @@ class Database:
                 VALUES (new.id, new.title, new.text_content);
             END;
         """)
+
+        # Nach Migration: bestehende Dokumente in den leeren FTS-Index eintragen,
+        # damit die AFTER UPDATE-Trigger korrekt arbeiten können.
+        if needs_fts_rebuild:
+            self.conn.execute(
+                "INSERT INTO documents_fts(rowid, title, text_content) "
+                "SELECT id, title, text_content FROM documents"
+            )
+
         self.conn.commit()
 
     # ── Dokument-Operationen ──────────────────────────────────────────────────
