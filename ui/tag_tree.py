@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (QTreeWidget, QTreeWidgetItem, QMenu,
 from PyQt6.QtCore import pyqtSignal, Qt
 from PyQt6.QtGui import QIcon
 
+import config
 from database.db import Database
 
 
@@ -26,6 +27,13 @@ class TagTree(QTreeWidget):
         self.customContextMenuRequested.connect(self._show_context_menu)
         self.itemClicked.connect(self._on_item_clicked)
         self.setMinimumWidth(160)
+
+        # Gemerkter Faltstatus: Menge expandierter tag_ids (aus Einstellungen)
+        settings = config.load_settings()
+        self._expanded_ids: set = set(settings.get("expanded_tags", []))
+        self.itemExpanded.connect(self._on_item_expanded)
+        self.itemCollapsed.connect(self._on_item_collapsed)
+
         self.reload()
 
     def reload(self) -> None:
@@ -36,7 +44,8 @@ class TagTree(QTreeWidget):
         all_item = QTreeWidgetItem(self, ["Alle Dokumente"])
         all_item.setData(0, Qt.ItemDataRole.UserRole, None)
         self._load_tags(None, self)
-        self.expandAll()
+        # Default eingeklappt; gemerkten Faltstatus wiederherstellen
+        self._restore_expansion()
         self.blockSignals(False)
 
     def _load_tags(self, parent_id: Optional[int],
@@ -54,6 +63,31 @@ class TagTree(QTreeWidget):
     def _on_item_clicked(self, item: QTreeWidgetItem, _col: int) -> None:
         tag_id = item.data(0, Qt.ItemDataRole.UserRole)
         self.tag_selected.emit(tag_id)
+
+    # ── Faltstatus ──────────────────────────────────────────────────────────────
+
+    def _on_item_expanded(self, item: QTreeWidgetItem) -> None:
+        tag_id = item.data(0, Qt.ItemDataRole.UserRole)
+        if tag_id is not None:
+            self._expanded_ids.add(tag_id)
+
+    def _on_item_collapsed(self, item: QTreeWidgetItem) -> None:
+        tag_id = item.data(0, Qt.ItemDataRole.UserRole)
+        if tag_id is not None:
+            self._expanded_ids.discard(tag_id)
+
+    def _restore_expansion(self) -> None:
+        """Stellt den gemerkten Faltstatus anhand der tag_ids wieder her."""
+        for item in self._iter_items(self.invisibleRootItem()):
+            tag_id = item.data(0, Qt.ItemDataRole.UserRole)
+            if tag_id is not None and tag_id in self._expanded_ids:
+                item.setExpanded(True)
+
+    def save_expansion_state(self) -> None:
+        """Persistiert den aktuellen Faltstatus in den Einstellungen."""
+        settings = config.load_settings()
+        settings["expanded_tags"] = sorted(self._expanded_ids)
+        config.save_settings(settings)
 
     def _show_context_menu(self, pos) -> None:
         item = self.itemAt(pos)

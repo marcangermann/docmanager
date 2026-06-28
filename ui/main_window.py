@@ -384,5 +384,6 @@ class MainWindow(QMainWindow):
     # ── Aufräumen ─────────────────────────────────────────────────────────────
 
     def closeEvent(self, event) -> None:
+        self._tag_tree.save_expansion_state()
         self._db.close()
         event.accept()
