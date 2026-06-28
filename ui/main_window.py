@@ -102,6 +102,9 @@ class MainWindow(QMainWindow):
         self._setup_statusbar()
         self._reload_all()
 
+        # Nach dem Start (Fenster sichtbar) auf neu hinzugefügte Dateien prüfen
+        QTimer.singleShot(0, self._check_new_files)
+
     # ── UI-Aufbau ─────────────────────────────────────────────────────────────
 
     def _setup_ui(self) -> None:
@@ -280,6 +283,19 @@ class MainWindow(QMainWindow):
 
     def _import_directory(self) -> None:
         dlg = DirectoryImportDialog(self._db, self._doc_manager, self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self._reload_all()
+
+    def _check_new_files(self) -> None:
+        """Prüft beim Start, ob unverwaltete PDFs im Verzeichnisbaum liegen."""
+        try:
+            untracked = self._doc_manager.find_untracked_files()
+        except Exception:
+            return
+        if not untracked:
+            return
+        from ui.new_files_dialog import NewFilesDialog
+        dlg = NewFilesDialog(untracked, self._base_dir, self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self._reload_all()
 

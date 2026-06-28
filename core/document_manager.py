@@ -170,6 +170,63 @@ class DocumentManager:
         except Exception:
             pass
 
+    def find_untracked_files(self) -> List[Path]:
+        """
+        Gibt alle PDFs im base_dir zurück, die noch nicht in der DB stehen
+        (z.B. manuell hineinkopierte Dateien). Sortiert nach Pfad.
+        """
+        existing_paths = {
+            row["path"] for row in self.db.get_all_documents()
+        }
+        return [
+            p for p in sorted(self.base_dir.rglob("*.pdf"))
+            if str(p) not in existing_paths
+        ]
+
+    def register_file(self, pdf_path: Path, run_ocr: bool = False) -> int:
+        """
+        Registriert eine bereits im base_dir liegende PDF in der DB (in-place,
+        ohne Kopieren/Verschieben):
+          - Tag-Pfad aus der Verzeichnisstruktur ableiten
+          - Titel und Datum aus dem Dateinamen (YYYY-MM-DD_titel)
+          - Text per extract_text; bei leerem Ergebnis und run_ocr=True per OCR
+        Gibt die neue doc_id zurück.
+        """
+        pdf_path = Path(pdf_path)
+
+        # Tag-Pfad aus Verzeichnisstruktur ableiten
+        rel = pdf_path.parent.relative_to(self.base_dir)
+        tag_path = list(rel.parts)
+
+        # Titel und Datum aus Dateiname
+        stem = pdf_path.stem
+        date_str: Optional[str] = None
+        title = stem
+        m = re.match(r'^(\d{4}-\d{2}-\d{2})[_\s](.*)', stem)
+        if m:
+            date_str = m.group(1)
+            title = m.group(2).replace("_", " ")
+
+        text = extract_text(pdf_path)
+        if run_ocr and not text.strip():
+            text, _, _ = extract_and_suggest(pdf_path)
+
+        page_count = get_page_count(pdf_path)
+        file_size = pdf_path.stat().st_size
+
+        doc_id = self.db.add_document(
+            path=str(pdf_path),
+            title=title,
+            page_count=page_count,
+            file_size=file_size,
+            text_content=text,
+            date_doc=date_str,
+        )
+        if tag_path:
+            tag_ids = self.db.get_tag_path_ids(tag_path)
+            self.db.assign_tags(doc_id, tag_ids)
+        return doc_id
+
     def rebuild_from_filesystem(self) -> int:
         """
         Scannt base_dir nach PDFs und fügt fehlende zur DB hinzu.
@@ -177,37 +234,7 @@ class DocumentManager:
         Gibt Anzahl neu hinzugefügter Dokumente zurück.
         """
         added = 0
-        existing_paths = {
-            row["path"] for row in self.db.get_all_documents()
-        }
-        for pdf_path in self.base_dir.rglob("*.pdf"):
-            if str(pdf_path) not in existing_paths:
-                # Tag-Pfad aus Verzeichnisstruktur ableiten
-                rel = pdf_path.parent.relative_to(self.base_dir)
-                tag_path = list(rel.parts)
-                # Titel und Datum aus Dateiname
-                stem = pdf_path.stem
-                date_str = None
-                title = stem
-                m = re.match(r'^(\d{4}-\d{2}-\d{2})_(.*)', stem)
-                if m:
-                    date_str = m.group(1)
-                    title = m.group(2).replace("_", " ")
-
-                text = extract_text(pdf_path)
-                page_count = get_page_count(pdf_path)
-                file_size = pdf_path.stat().st_size
-
-                doc_id = self.db.add_document(
-                    path=str(pdf_path),
-                    title=title,
-                    page_count=page_count,
-                    file_size=file_size,
-                    text_content=text,
-                    date_doc=date_str,
-                )
-                if tag_path:
-                    tag_ids = self.db.get_tag_path_ids(tag_path)
-                    self.db.assign_tags(doc_id, tag_ids)
-                added += 1
+        for pdf_path in self.find_untracked_files():
+            self.register_file(pdf_path, run_ocr=False)
+            added += 1
         return added
