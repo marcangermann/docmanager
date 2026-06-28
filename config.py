@@ -19,6 +19,16 @@ OCR_LANGUAGES = "deu+eng"
 # Scanner-Standardeinstellungen
 SCANNER_DEFAULT_DPI = 300
 SCANNER_DEFAULT_MODE = "Color"  # "Color", "Gray", "Lineart"
+SCANNER_DEFAULT_PAPER = "A4"
+
+# Papierformate: Name → (Breite mm, Höhe mm) oder None für automatisch
+PAPER_SIZES: dict = {
+    "A4":          (210.0, 297.0),
+    "A5":          (148.0, 210.0),
+    "Letter":      (215.9, 279.4),
+    "Legal":       (215.9, 355.6),
+    "Automatisch": None,
+}
 
 # Datumformat für Dateinamen
 DATE_FORMAT = "%Y-%m-%d"
@@ -41,6 +51,9 @@ def load_settings() -> dict:
         "ocr_languages": OCR_LANGUAGES,
         "scanner_dpi": SCANNER_DEFAULT_DPI,
         "scanner_mode": SCANNER_DEFAULT_MODE,
+        "scanner_paper": SCANNER_DEFAULT_PAPER,
+        "scanner_last_device": None,
+        "scanner_last_source": None,
     }
 
 
