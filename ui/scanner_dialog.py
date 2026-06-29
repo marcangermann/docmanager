@@ -54,11 +54,25 @@ class ScanWorker(QThread):
         self.finished.emit(result)
 
 
+class _SourcesWorker(QThread):
+    """Fragt die Quellen eines Geräts ab (scanimage --help) abseits des GUI-Threads."""
+    done = pyqtSignal(str, list)  # device, sources
+
+    def __init__(self, device: str):
+        super().__init__()
+        self.device = device
+
+    def run(self):
+        self.done.emit(self.device, get_scanner_sources(self.device))
+
+
 # ── Scanner-Dialog ────────────────────────────────────────────────────────────
 
 class ScannerDialog(QDialog):
     # Klassenvar.: Scanner-Cache (bleibt über Dialog-Instanzen erhalten)
     _scanner_cache: Optional[List[Tuple[str, str]]] = None
+    # Klassenvar.: Quellen je Gerät zwischenspeichern (vermeidet erneutes --help)
+    _sources_cache: dict = {}
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -66,10 +80,13 @@ class ScannerDialog(QDialog):
         self.setMinimumWidth(420)
         self._result_path: Optional[Path] = None
         self._worker: Optional[ScanWorker] = None
+        self._src_workers: list = []   # laufende Quellen-Worker (Referenz halten)
         self._next_action: str = "initial"  # "initial" | "append" | "duplex"
         self._settings = config.load_settings()
         self._setup_ui()
         self._load_scanners()
+        # Beim Schließen laufende Quellen-Worker sauber abwarten
+        self.finished.connect(self._await_src_workers)
 
     # ── UI-Aufbau ──────────────────────────────────────────────────────────────
 
@@ -213,10 +230,41 @@ class ScannerDialog(QDialog):
         if not device:
             self._source_combo.addItem("–", None)
             return
-        sources = get_scanner_sources(device)
+        # Aus Cache sofort, sonst im Hintergrund laden (kein GUI-Freeze)
+        if device in ScannerDialog._sources_cache:
+            self._populate_sources(device, ScannerDialog._sources_cache[device])
+            return
+        self._source_combo.addItem("Lade Quellen …", None)
+        self._source_combo.setEnabled(False)
+        worker = _SourcesWorker(device)
+        worker.done.connect(self._on_sources_loaded)
+        worker.finished.connect(lambda w=worker: self._src_workers.remove(w)
+                                if w in self._src_workers else None)
+        self._src_workers.append(worker)
+        worker.start()
+
+    def _on_sources_loaded(self, device: str, sources: list) -> None:
+        ScannerDialog._sources_cache[device] = sources
+        # Nur anwenden, wenn der Nutzer das Gerät nicht inzwischen gewechselt hat
+        if self._scanner_combo.currentData() == device:
+            self._populate_sources(device, sources)
+
+    def _await_src_workers(self) -> None:
+        """Wartet beim Dialog-Ende auf noch laufende Quellen-Worker."""
+        for w in list(self._src_workers):
+            try:
+                w.done.disconnect()
+            except Exception:
+                pass
+            w.wait(11000)
+        self._src_workers.clear()
+
+    def _populate_sources(self, device: str, sources: list) -> None:
+        self._source_combo.setEnabled(True)
+        self._source_combo.clear()
         last_source = self._settings.get("scanner_last_source")
-        select_idx = 0
         if sources:
+            select_idx = 0
             for i, s in enumerate(sources):
                 self._source_combo.addItem(s, s)
                 if s == last_source:

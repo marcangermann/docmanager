@@ -71,17 +71,19 @@ def get_scanner_sources(device: str) -> List[str]:
                 continue
             # Format: --source Flatbed|ADF [Flatbed]
             # oder:   --source Flatbed|ADF[Single-sided]|ADF[Duplex] [Flatbed]
-            m = re.match(r"--source\s+([\w][\w\s\[\]]*(?:[|,][\w\s\[\]]+)+)", stripped)
-            if m:
-                parts = re.split(r"[|,]", m.group(1))
-                sources = []
-                for p in parts:
-                    # Standard-Marker [Flatbed] entfernen
-                    p = re.sub(r"\s*\[(?![A-Z]{2}[a-z]).*?\]\s*$", "", p).strip()
-                    if p:
-                        sources.append(p)
-                if sources:
-                    return sources
+            # oder:   --source ADF Duplex|ADF Front [ADF Front]
+            rest = stripped[len("--source"):].strip()
+            # Default-Marker am Ende entfernen: nur eine per Leerzeichen
+            # abgetrennte Klammer (z.B. " [Flatbed]") – innere Marker wie
+            # "ADF[Single-sided]" bleiben Teil des Quellnamens erhalten.
+            rest = re.sub(r"\s+\[[^\]]*\]\s*$", "", rest).strip()
+            if not rest:
+                continue
+            # Optionen sind per | getrennt (Werte dürfen Leerzeichen/Bindestriche
+            # enthalten und werden unverändert an scanimage --source übergeben)
+            sources = [s.strip() for s in rest.split("|") if s.strip()]
+            if sources:
+                return sources
         return []
     except Exception as e:
         print(f"Quellenabfrage fehlgeschlagen: {e}", file=sys.stderr)
@@ -293,7 +295,14 @@ def interleave_pdfs(front_pdf: Path, back_pdf: Path,
                 bi = back_indices[i]
                 result.insert_pdf(back, from_page=bi, to_page=bi)
 
-        result.save(str(output_pdf))
+        # Über Temp-Datei speichern, damit output_pdf == front_pdf/back_pdf
+        # (z.B. wiederholter Duplex) nicht auf eine offene Datei schreibt.
+        tmp = output_pdf.with_suffix(".tmp.pdf")
+        result.save(str(tmp))
+        front.close()
+        back.close()
+        result.close()
+        tmp.replace(output_pdf)
         return output_pdf
     except Exception as e:
         print(f"Duplex-Verschachtelung fehlgeschlagen: {e}", file=sys.stderr)
